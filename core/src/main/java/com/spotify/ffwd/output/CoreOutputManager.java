@@ -33,11 +33,14 @@ import com.spotify.ffwd.model.Metric;
 import com.spotify.ffwd.statistics.OutputManagerStatistics;
 import eu.toolchain.async.AsyncFramework;
 import eu.toolchain.async.AsyncFuture;
+import io.netty.util.internal.ConcurrentSet;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
@@ -45,6 +48,7 @@ import lombok.extern.slf4j.Slf4j;
 public class CoreOutputManager implements OutputManager {
     private static final String DEBUG_ID = "core.output";
     private static final String HOST = "host";
+    private final Map<String, Set<Integer>> cardinalityCheck = new ConcurrentHashMap<>();
 
     @Inject
     @Getter
@@ -202,6 +206,17 @@ public class CoreOutputManager implements OutputManager {
             event.getDescription(), host, mergedRiemannTags, mergedTags);
     }
 
+    private void trackMetricTags(final Map<String, String> tags) {
+        System.out.println("Cardinality Checker:");
+        tags.forEach((key, value) -> {
+            if (cardinalityCheck.get(key).size() < 10000) {
+                cardinalityCheck.computeIfAbsent(key, k -> new ConcurrentSet<>());
+                cardinalityCheck.get(key).add(value.hashCode());
+            }
+            System.out.println(String.format(" %s -> %d", key, cardinalityCheck.get(key).size()));
+        });
+    }
+
     /**
      * Filter the provided Metric and complete fields.
      */
@@ -218,8 +233,11 @@ public class CoreOutputManager implements OutputManager {
         final Set<String> mergedRiemannTags = Sets.newHashSet(riemannTags);
         mergedRiemannTags.addAll(metric.getRiemannTags());
 
-        return new Metric(metric.getKey(), metric.getValue(), time, mergedRiemannTags,
-            mergedTags, mergedResource, metric.getProc());
+        final Metric newMetric =
+            new Metric(metric.getKey(), metric.getValue(), time, mergedRiemannTags, mergedTags,
+                mergedResource, metric.getProc());
+        trackMetricTags(newMetric.getTags());
+        return newMetric;
     }
 
     /**
